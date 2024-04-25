@@ -131,29 +131,53 @@ async fn get_file(
 	let resp=builder.send().await;
 	let resp=match resp{
 		Ok(resp)=>resp,
-		Err(e)=>return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,e.to_string()).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
+		},
 	};
 	let v=match load_all(resp,content_length_limit.into()).await{
 		Ok(v)=>v,
-		Err(e)=>return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,e).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.parse().unwrap());
+			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
+		},
 	};
 	//strはutf8表現なのでゼロコピー操作
 	let s=match std::str::from_utf8(&v){
 		Ok(s)=>s,
-		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let start=match s.find("<head"){
 		Some(idx)=>idx,
-		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no head").into_response(),
+		None=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error","no head".parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let end=match s.find("</head>"){
 		Some(idx)=>idx,
-		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no /head").into_response(),
+		None=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error","no /head".parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let s=&s[start+6..end];
 	let dom=match html_parser::Dom::parse(s){
 		Ok(idx)=>idx,
-		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let base_url=if let Ok(url)=reqwest::Url::parse(&q.url){
 		format!("{}://{}{}",url.scheme(),url.host_str().unwrap(),url.port().map(|n|format!(":{n}")).unwrap_or_default())
