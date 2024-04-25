@@ -40,7 +40,7 @@ pub struct SummalyResult{
 	description:Option<String>,
 	thumbnail:Option<String>,
 	sitename:Option<String>,
-	player:Option<SummalyPlayer>,
+	player:serde_json::Value,
 	sensitive:bool,
 	#[serde(rename = "activityPub")]
 	activity_pub:Option<String>,
@@ -206,7 +206,6 @@ async fn get_file(
 		}
 	}
 	if encoding==Some(encoding_rs::UTF_8){
-		println!("ENCODE NONE");
 		encoding=None;
 	}
 	let mut dst=Cow::Borrowed("");
@@ -269,7 +268,7 @@ async fn get_file(
 		description: None,
 		thumbnail: None,
 		sitename: None,
-		player: None,
+		player: serde_json::json!({}),
 		sensitive: false,
 		activity_pub: None,
 		url: q.url.clone(),
@@ -406,13 +405,11 @@ async fn get_file(
 		}
 	}
 	//すべての有効なプレイヤーにはurlが存在する
-	/*
 	if player.url.is_some(){
-		resp.player=Some(player);
+		if let Ok(player)=serde_json::to_value(player){
+			resp.player=player;
+		}
 	}
-	*/
-	//プレイヤーが無効であっても構造を追加する
-	resp.player=Some(player);
 	if let Some(icon)=&resp.icon{
 		if icon.starts_with("/"){
 			resp.icon=Some(format!("{}{}",base_url,icon));
