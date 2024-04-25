@@ -186,44 +186,44 @@ async fn get_file(
 						s.as_str(),
 						att.get("content").unwrap_or(&None).as_ref(),
 					)){
-							Some(("og:image",Some(content))) => {
-								resp.thumbnail=Some(content.clone());
-							},
-							Some(("og:url",Some(content))) => {
-								resp.url=content.clone();
-							},
-							Some(("og:title",Some(content))) => {
-								resp.title=Some(content.clone());
-							},
-							Some(("og:description",Some(content))) => {
-								resp.description=Some(content.clone());
-							},
-							Some(("description",Some(content))) => {
-								resp.description=Some(content.clone());
-							},
-							Some(("og:site_name",Some(content))) => {
-								resp.sitename=Some(content.clone());
-							},
-							Some(("og:video:url",Some(content))) => {
-								if player.url.is_none(){//og:video:secure_url優先
-									player.url=Some(content.clone());
-								}
-							},
-							Some(("og:video:secure_url",Some(content))) => {
+						Some(("og:image",Some(content))) => {
+							resp.thumbnail=Some(content.clone());
+						},
+						Some(("og:url",Some(content))) => {
+							resp.url=content.clone();
+						},
+						Some(("og:title",Some(content))) => {
+							resp.title=Some(content.clone());
+						},
+						Some(("og:description",Some(content))) => {
+							resp.description=Some(content.clone());
+						},
+						Some(("description",Some(content))) => {
+							resp.description=Some(content.clone());
+						},
+						Some(("og:site_name",Some(content))) => {
+							resp.sitename=Some(content.clone());
+						},
+						Some(("og:video:url",Some(content))) => {
+							if player.url.is_none(){//og:video:secure_url優先
 								player.url=Some(content.clone());
-							},
-							Some(("og:video:width",Some(content))) => {
-								if let Ok(content)=content.parse::<f64>(){
-									player.width=Some(content);
-								}
-							},
-							Some(("og:video:height",Some(content))) => {
-								if let Ok(content)=content.parse::<f64>(){
-									player.height=Some(content);
-								}
-							},
-							_ => {},
-						}
+							}
+						},
+						Some(("og:video:secure_url",Some(content))) => {
+							player.url=Some(content.clone());
+						},
+						Some(("og:video:width",Some(content))) => {
+							if let Ok(content)=content.parse::<f64>(){
+								player.width=Some(content);
+							}
+						},
+						Some(("og:video:height",Some(content))) => {
+							if let Ok(content)=content.parse::<f64>(){
+								player.height=Some(content);
+							}
+						},
+						_ => {},
+					}
 				},
 				("link",att)=>{
 					match att.get("rel").unwrap_or(&None).as_ref().map(|s|(
@@ -231,46 +231,46 @@ async fn get_file(
 						att.get("href").unwrap_or(&None).as_ref(),
 						att.get("type").unwrap_or(&None).as_ref().map(|t|t.as_str()),
 					)){
-							Some(("shortcut icon",Some(href),_)) => {
-								if resp.icon.is_none(){//icon優先
-									resp.icon=Some(href.clone());
-								}
-							},
-							Some(("icon",Some(href),_)) => {
+						Some(("shortcut icon",Some(href),_)) => {
+							if resp.icon.is_none(){//icon優先
 								resp.icon=Some(href.clone());
-							},
-							Some(("apple-touch-icon",Some(href),_)) => {
-								if resp.thumbnail.is_none(){//og:image優先
-									resp.thumbnail=Some(href.clone());
-								}
-							},
-							Some(("alternate",Some(href),Some("application/json+oembed"))) => {
-								let href=html_escape::decode_html_entities(&href);
-								let embed_res=if let Ok(href)=urlencoding::decode(&href){
-									let builder=client.get(href.as_ref());
-									let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
-									let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
-									let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
-									let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
-									builder.send().await.ok()
+							}
+						},
+						Some(("icon",Some(href),_)) => {
+							resp.icon=Some(href.clone());
+						},
+						Some(("apple-touch-icon",Some(href),_)) => {
+							if resp.thumbnail.is_none(){//og:image優先
+								resp.thumbnail=Some(href.clone());
+							}
+						},
+						Some(("alternate",Some(href),Some("application/json+oembed"))) => {
+							let href=html_escape::decode_html_entities(&href);
+							let embed_res=if let Ok(href)=urlencoding::decode(&href){
+								let builder=client.get(href.as_ref());
+								let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
+								let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
+								let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
+								let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
+								builder.send().await.ok()
+							}else{
+								None
+							};
+							let embed_json=if let Some(embed_res)=embed_res{
+								if let Ok(d)=load_all(embed_res,content_length_limit.into()).await{
+									serde_json::from_slice(&d).ok()
 								}else{
 									None
-								};
-								let embed_json=if let Some(embed_res)=embed_res{
-									if let Ok(d)=load_all(embed_res,content_length_limit.into()).await{
-										serde_json::from_slice(&d).ok()
-									}else{
-										None
-									}
-								}else{
-									None
-								};
-								if let Some(v)=embed_json{
-									resp.oembed=Some(v);
 								}
-							},
-							_ => {},
-						}
+							}else{
+								None
+							};
+							if let Some(v)=embed_json{
+								resp.oembed=Some(v);
+							}
+						},
+						_ => {},
+					}
 				},
 				_=>{}
 			}
