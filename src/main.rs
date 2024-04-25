@@ -1,4 +1,4 @@
-use std::{io::Write, net::SocketAddr, sync::Arc};
+use std::{borrow::Cow, io::Write, net::SocketAddr, sync::Arc};
 
 use axum::{response::IntoResponse, Router};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct SummalyResult{
 	description:Option<String>,
 	thumbnail:Option<String>,
 	sitename:Option<String>,
-	player:Option<SummalyPlayer>,
+	player:serde_json::Value,
 	sensitive:bool,
 	#[serde(rename = "activityPub")]
 	activity_pub:Option<String>,
@@ -131,29 +131,125 @@ async fn get_file(
 	let resp=builder.send().await;
 	let resp=match resp{
 		Ok(resp)=>resp,
-		Err(e)=>return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,e.to_string()).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
+		},
 	};
 	let v=match load_all(resp,content_length_limit.into()).await{
 		Ok(v)=>v,
-		Err(e)=>return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,e).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.parse().unwrap());
+			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
+		},
 	};
-	//strはutf8表現なのでゼロコピー操作
-	let s=match std::str::from_utf8(&v){
-		Ok(s)=>s,
-		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
+	let mut meta_charset=None;
+	let mut content_type=None;
+	{
+		let mut doc=String::new();
+		let meta_charset_b="<meta ".as_bytes();
+		let mut i=0;
+		let mut bb=vec![];
+		for b in v.iter(){
+			if meta_charset_b.len()>i{
+				if *b==meta_charset_b[i]{
+					i+=1;
+				}else{
+					i=0;
+				}
+			}else if *b==62{
+				i=0;
+				if let Ok(c)=std::str::from_utf8(&bb){
+					doc+="<meta ";
+					doc+=c;
+					doc+=">\n"
+				}
+				bb.clear();
+			}else{
+				bb.push(*b);
+			}
+		}
+		if let Ok(doc)=html_parser::Dom::parse(&doc){
+			for node in doc.children.iter(){
+				if let Some(e)=node.element(){
+					match (
+						e.attributes.get("http-equiv").unwrap_or(&None).as_ref().map(|s|s.as_str()),
+						e.attributes.get("content").unwrap_or(&None).as_ref(),
+					){
+						(Some("content-type"),Some(content))=>{
+							content_type=Some(content.to_owned());
+						},
+						_ => {},
+					}
+					if let Some(s)=e.attributes.get("charset").unwrap_or(&None){
+						meta_charset=Some(s.to_owned());
+					}
+				}
+			}
+		}
+	}
+	let mut encoding=None;
+	if let Some(content_type)=&content_type{
+		//content_type="text/html;charset=shift_jis"
+		for c in content_type.split(';'){
+			if let Some(i)=c.find("charset="){
+				let charset=&c[i+"charset=".len()..];
+				encoding=encoding_rs::Encoding::for_label(charset.as_bytes());
+			}
+		}
+	}
+	if let Some(meta_charset)=&meta_charset{
+		if let Some(e)=encoding_rs::Encoding::for_label(meta_charset.as_bytes()){
+			encoding=Some(e);
+		}
+	}
+	if encoding==Some(encoding_rs::UTF_8){
+		encoding=None;
+	}
+	let mut dst=Cow::Borrowed("");
+	if let Some(encoding)=encoding{
+		(dst,_,_)=encoding.decode(&v);
+	}
+	let s=if dst.is_empty(){
+		//strはutf8表現なのでゼロコピー操作
+		let s=match std::str::from_utf8(&v){
+			Ok(s)=>s,
+			Err(e)=>{
+				let mut headers=axum::http::HeaderMap::new();
+				headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+				return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+			},
+		};
+		Cow::Borrowed(s)
+	}else{
+		dst
 	};
 	let start=match s.find("<head"){
 		Some(idx)=>idx,
-		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no head").into_response(),
+		None=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error","no head".parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let end=match s.find("</head>"){
 		Some(idx)=>idx,
-		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no /head").into_response(),
+		None=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error","no /head".parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let s=&s[start+6..end];
 	let dom=match html_parser::Dom::parse(s){
 		Ok(idx)=>idx,
-		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
+		Err(e)=>{
+			let mut headers=axum::http::HeaderMap::new();
+			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+		},
 	};
 	let base_url=if let Ok(url)=reqwest::Url::parse(&q.url){
 		format!("{}://{}{}",url.scheme(),url.host_str().unwrap(),url.port().map(|n|format!(":{n}")).unwrap_or_default())
@@ -172,7 +268,7 @@ async fn get_file(
 		description: None,
 		thumbnail: None,
 		sitename: None,
-		player: None,
+		player: serde_json::json!({}),
 		sensitive: false,
 		activity_pub: None,
 		url: q.url.clone(),
@@ -186,44 +282,44 @@ async fn get_file(
 						s.as_str(),
 						att.get("content").unwrap_or(&None).as_ref(),
 					)){
-							Some(("og:image",Some(content))) => {
-								resp.thumbnail=Some(content.clone());
-							},
-							Some(("og:url",Some(content))) => {
-								resp.url=content.clone();
-							},
-							Some(("og:title",Some(content))) => {
-								resp.title=Some(content.clone());
-							},
-							Some(("og:description",Some(content))) => {
-								resp.description=Some(content.clone());
-							},
-							Some(("description",Some(content))) => {
-								resp.description=Some(content.clone());
-							},
-							Some(("og:site_name",Some(content))) => {
-								resp.sitename=Some(content.clone());
-							},
-							Some(("og:video:url",Some(content))) => {
-								if player.url.is_none(){//og:video:secure_url優先
-									player.url=Some(content.clone());
-								}
-							},
-							Some(("og:video:secure_url",Some(content))) => {
+						Some(("og:image",Some(content))) => {
+							resp.thumbnail=Some(content.clone());
+						},
+						Some(("og:url",Some(content))) => {
+							resp.url=content.clone();
+						},
+						Some(("og:title",Some(content))) => {
+							resp.title=Some(content.clone());
+						},
+						Some(("og:description",Some(content))) => {
+							resp.description=Some(content.clone());
+						},
+						Some(("description",Some(content))) => {
+							resp.description=Some(content.clone());
+						},
+						Some(("og:site_name",Some(content))) => {
+							resp.sitename=Some(content.clone());
+						},
+						Some(("og:video:url",Some(content))) => {
+							if player.url.is_none(){//og:video:secure_url優先
 								player.url=Some(content.clone());
-							},
-							Some(("og:video:width",Some(content))) => {
-								if let Ok(content)=content.parse::<f64>(){
-									player.width=Some(content);
-								}
-							},
-							Some(("og:video:height",Some(content))) => {
-								if let Ok(content)=content.parse::<f64>(){
-									player.height=Some(content);
-								}
-							},
-							_ => {},
-						}
+							}
+						},
+						Some(("og:video:secure_url",Some(content))) => {
+							player.url=Some(content.clone());
+						},
+						Some(("og:video:width",Some(content))) => {
+							if let Ok(content)=content.parse::<f64>(){
+								player.width=Some(content);
+							}
+						},
+						Some(("og:video:height",Some(content))) => {
+							if let Ok(content)=content.parse::<f64>(){
+								player.height=Some(content);
+							}
+						},
+						_ => {},
+					}
 				},
 				("link",att)=>{
 					match att.get("rel").unwrap_or(&None).as_ref().map(|s|(
@@ -231,46 +327,46 @@ async fn get_file(
 						att.get("href").unwrap_or(&None).as_ref(),
 						att.get("type").unwrap_or(&None).as_ref().map(|t|t.as_str()),
 					)){
-							Some(("shortcut icon",Some(href),_)) => {
-								if resp.icon.is_none(){//icon優先
-									resp.icon=Some(href.clone());
-								}
-							},
-							Some(("icon",Some(href),_)) => {
+						Some(("shortcut icon",Some(href),_)) => {
+							if resp.icon.is_none(){//icon優先
 								resp.icon=Some(href.clone());
-							},
-							Some(("apple-touch-icon",Some(href),_)) => {
-								if resp.thumbnail.is_none(){//og:image優先
-									resp.thumbnail=Some(href.clone());
-								}
-							},
-							Some(("alternate",Some(href),Some("application/json+oembed"))) => {
-								let href=html_escape::decode_html_entities(&href);
-								let embed_res=if let Ok(href)=urlencoding::decode(&href){
-									let builder=client.get(href.as_ref());
-									let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
-									let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
-									let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
-									let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
-									builder.send().await.ok()
+							}
+						},
+						Some(("icon",Some(href),_)) => {
+							resp.icon=Some(href.clone());
+						},
+						Some(("apple-touch-icon",Some(href),_)) => {
+							if resp.thumbnail.is_none(){//og:image優先
+								resp.thumbnail=Some(href.clone());
+							}
+						},
+						Some(("alternate",Some(href),Some("application/json+oembed"))) => {
+							let href=html_escape::decode_html_entities(&href);
+							let embed_res=if let Ok(href)=urlencoding::decode(&href){
+								let builder=client.get(href.as_ref());
+								let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
+								let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
+								let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
+								let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
+								builder.send().await.ok()
+							}else{
+								None
+							};
+							let embed_json=if let Some(embed_res)=embed_res{
+								if let Ok(d)=load_all(embed_res,content_length_limit.into()).await{
+									serde_json::from_slice(&d).ok()
 								}else{
 									None
-								};
-								let embed_json=if let Some(embed_res)=embed_res{
-									if let Ok(d)=load_all(embed_res,content_length_limit.into()).await{
-										serde_json::from_slice(&d).ok()
-									}else{
-										None
-									}
-								}else{
-									None
-								};
-								if let Some(v)=embed_json{
-									resp.oembed=Some(v);
 								}
-							},
-							_ => {},
-						}
+							}else{
+								None
+							};
+							if let Some(v)=embed_json{
+								resp.oembed=Some(v);
+							}
+						},
+						_ => {},
+					}
 				},
 				_=>{}
 			}
@@ -309,13 +405,11 @@ async fn get_file(
 		}
 	}
 	//すべての有効なプレイヤーにはurlが存在する
-	/*
 	if player.url.is_some(){
-		resp.player=Some(player);
+		if let Ok(player)=serde_json::to_value(player){
+			resp.player=player;
+		}
 	}
-	*/
-	//プレイヤーが無効であっても構造を追加する
-	resp.player=Some(player);
 	if let Some(icon)=&resp.icon{
 		if icon.starts_with("/"){
 			resp.icon=Some(format!("{}{}",base_url,icon));
