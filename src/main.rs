@@ -309,9 +309,13 @@ async fn get_file(
 		}
 	}
 	//すべての有効なプレイヤーにはurlが存在する
+	/*
 	if player.url.is_some(){
 		resp.player=Some(player);
 	}
+	*/
+	//プレイヤーが無効であっても構造を追加する
+	resp.player=Some(player);
 	if let Some(icon)=&resp.icon{
 		if icon.starts_with("/"){
 			resp.icon=Some(format!("{}{}",base_url,icon));
