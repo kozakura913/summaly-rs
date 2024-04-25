@@ -1,4 +1,4 @@
-use std::{io::Write, net::SocketAddr, sync::Arc};
+use std::{borrow::Cow, io::Write, net::SocketAddr, sync::Arc};
 
 use axum::{response::IntoResponse, Router};
 use serde::{Deserialize, Serialize};
@@ -145,14 +145,87 @@ async fn get_file(
 			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
 		},
 	};
-	//strはutf8表現なのでゼロコピー操作
-	let s=match std::str::from_utf8(&v){
-		Ok(s)=>s,
-		Err(e)=>{
-			let mut headers=axum::http::HeaderMap::new();
-			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
-			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
-		},
+	let mut meta_charset=None;
+	let mut content_type=None;
+	{
+		let mut doc=String::new();
+		let meta_charset_b="<meta ".as_bytes();
+		let mut i=0;
+		let mut bb=vec![];
+		for b in v.iter(){
+			if meta_charset_b.len()>i{
+				if *b==meta_charset_b[i]{
+					i+=1;
+				}else{
+					i=0;
+				}
+			}else if *b==62{
+				i=0;
+				if let Ok(c)=std::str::from_utf8(&bb){
+					doc+="<meta ";
+					doc+=c;
+					doc+=">\n"
+				}
+				bb.clear();
+			}else{
+				bb.push(*b);
+			}
+		}
+		if let Ok(doc)=html_parser::Dom::parse(&doc){
+			for node in doc.children.iter(){
+				if let Some(e)=node.element(){
+					match (
+						e.attributes.get("http-equiv").unwrap_or(&None).as_ref().map(|s|s.as_str()),
+						e.attributes.get("content").unwrap_or(&None).as_ref(),
+					){
+						(Some("content-type"),Some(content))=>{
+							content_type=Some(content.to_owned());
+						},
+						_ => {},
+					}
+					if let Some(s)=e.attributes.get("charset").unwrap_or(&None){
+						meta_charset=Some(s.to_owned());
+					}
+				}
+			}
+		}
+	}
+	let mut encoding=None;
+	if let Some(content_type)=&content_type{
+		//content_type="text/html;charset=shift_jis"
+		for c in content_type.split(';'){
+			if let Some(i)=c.find("charset="){
+				let charset=&c[i+"charset=".len()..];
+				encoding=encoding_rs::Encoding::for_label(charset.as_bytes());
+			}
+		}
+	}
+	if let Some(meta_charset)=&meta_charset{
+		if let Some(e)=encoding_rs::Encoding::for_label(meta_charset.as_bytes()){
+			encoding=Some(e);
+		}
+	}
+	if encoding==Some(encoding_rs::UTF_8){
+		println!("ENCODE NONE");
+		encoding=None;
+	}
+	let mut dst=Cow::Borrowed("");
+	if let Some(encoding)=encoding{
+		(dst,_,_)=encoding.decode(&v);
+	}
+	let s=if dst.is_empty(){
+		//strはutf8表現なのでゼロコピー操作
+		let s=match std::str::from_utf8(&v){
+			Ok(s)=>s,
+			Err(e)=>{
+				let mut headers=axum::http::HeaderMap::new();
+				headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+				return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
+			},
+		};
+		Cow::Borrowed(s)
+	}else{
+		dst
 	};
 	let start=match s.find("<head"){
 		Some(idx)=>idx,
