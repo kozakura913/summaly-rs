@@ -142,7 +142,6 @@ async fn get_file(
 		Ok(s)=>s,
 		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
 	};
-	std::fs::write("wip2.html",s).unwrap();
 	let start=match s.find("<head"){
 		Some(idx)=>idx,
 		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no head").into_response(),
@@ -152,12 +151,10 @@ async fn get_file(
 		None=>return (axum::http::StatusCode::BAD_GATEWAY,"no /head").into_response(),
 	};
 	let s=&s[start+6..end];
-	std::fs::write("wip",s.as_bytes()).unwrap();
 	let dom=match html_parser::Dom::parse(s){
 		Ok(idx)=>idx,
 		Err(e)=>return (axum::http::StatusCode::BAD_GATEWAY,e.to_string()).into_response(),
 	};
-	std::fs::write("wip.json",dom.to_json_pretty().unwrap()).unwrap();
 	let base_url=if let Ok(url)=reqwest::Url::parse(&q.url){
 		format!("{}://{}{}",url.scheme(),url.host_str().unwrap(),url.port().map(|n|format!(":{n}")).unwrap_or_default())
 	}else{
