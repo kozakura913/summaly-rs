@@ -455,25 +455,54 @@ async fn get_file(
 	if resp.icon.is_none(){
 		resp.icon=Some(format!("{}/favicon.ico",base_url_str));
 	}
-	if let Some(icon)=&resp.icon{
-		if icon.starts_with("//"){
-			resp.icon=Some(format!("{}:{}",base_url.scheme(),icon));
+	fn solve_url(icon:&String,base_url:&reqwest::Url,base_url_str:&str,media_proxy:&Option<String>,proxy_filename:&str)->Option<String>{
+		let icon=if icon.starts_with("//"){
+			Cow::Owned(format!("{}:{}",base_url.scheme(),icon))
 		}else if icon.starts_with("/"){
-			resp.icon=Some(format!("{}{}",base_url_str,icon));
-		}
-		if let Some(media_proxy)=&config.media_proxy{
-			resp.icon=Some(format!("{}icon.webp?url={}",media_proxy,urlencoding::encode(resp.icon.as_ref().unwrap())));
+			Cow::Owned(format!("{}{}",base_url_str,icon))
+		}else if !icon.starts_with("http"){
+			let buf=std::path::PathBuf::from(base_url.path());
+			let buf=buf.join(std::path::Path::new(icon));
+			if let Some(s)=buf.to_str(){
+				let mut path_list=vec![];
+				for part in s.split("/"){
+					if part.is_empty()||part=="."{
+
+					}else if part==".."{
+						if path_list.len()>0{
+							path_list.remove(path_list.len()-1);
+						}
+					}else{
+						path_list.push(part);
+					}
+				}
+				let mut path_string=base_url_str.to_owned();
+				for part in path_list{
+					path_string+="/";
+					path_string+=part;
+				}
+				Cow::Owned(path_string)
+			}else{
+				return None;
+			}
+		}else{
+			Cow::Borrowed(icon)
+		};
+		if let Some(media_proxy)=&media_proxy{
+			Some(format!("{}{}?url={}",media_proxy,proxy_filename,urlencoding::encode(icon.as_str())))
+		}else{
+			Some(icon.into_owned())
 		}
 	}
-	if let Some(thumbnail)=&resp.thumbnail{
-		if thumbnail.starts_with("//"){
-			resp.thumbnail=Some(format!("{}:{}",base_url.scheme(),thumbnail));
-		}else if thumbnail.starts_with("/"){
-			resp.thumbnail=Some(format!("{}{}",base_url_str,thumbnail));
-		}
-		if let Some(media_proxy)=&config.media_proxy{
-			resp.thumbnail=Some(format!("{}thumbnail.webp?url={}",media_proxy,urlencoding::encode(resp.thumbnail.as_ref().unwrap())));
-		}
+	if let Some(Some(icon))=resp.icon.as_ref().map(|s|
+		solve_url(s,&base_url,&base_url_str,&config.media_proxy,"icon.webp")
+	){
+		resp.icon=Some(icon);
+	}
+	if let Some(Some(thumbnail))=resp.thumbnail.as_ref().map(|s|
+		solve_url(s,&base_url,&base_url_str,&config.media_proxy,"thumbnail.webp")
+	){
+		resp.thumbnail=Some(thumbnail);
 	}
 	if let Ok(json)=serde_json::to_string(&resp){
 		let mut headers=axum::http::HeaderMap::new();
