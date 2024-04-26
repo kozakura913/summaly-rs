@@ -390,7 +390,9 @@ async fn get_file(
 								let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
 								let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
 								let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
-								builder.send().await.ok()
+								builder.send().await.map_err(|e|{
+									println!("oembed {} {:?}",href,e);
+								}).ok()
 							}else{
 								None
 							};
