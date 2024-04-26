@@ -281,8 +281,45 @@ async fn get_file(
 	};
 	for node in dom.children.iter(){
 		if let html_parser::Node::Element(element)=node{
+			if element.name.as_str()=="title"{
+				if resp.title.is_none(){//og:title優先
+					let mut s=String::new();
+					for e in element.children.iter(){
+						if let Some(c)=e.text(){
+							s+=c;
+						}
+					}
+					let ts=s.trim();
+					if !ts.is_empty(){
+						if ts==s.as_str(){
+							resp.title=Some(s);
+						}else{
+							resp.title=Some(ts.to_owned());
+						}
+					}
+				}
+			}
 			match (element.name.as_str(),&element.attributes){
 				("meta",att)=>{
+					match att.get("name").unwrap_or(&None).as_ref().map(|s|(
+						s.as_str(),
+						att.get("content").unwrap_or(&None).as_ref(),
+					)){
+						Some(("msapplication-tooltip",Some(content))) => {
+							if resp.description.is_none(){//og:description優先
+								resp.description=Some(content.clone());
+							}
+						},
+						Some(("application-name",Some(content))) => {
+							if resp.sitename.is_none(){//og:site_name優先
+								resp.sitename=Some(content.clone());
+							}
+							if resp.title.is_none(){//og:title優先
+								resp.title=Some(content.clone());
+							}
+						},
+						_=>{}
+					}
 					match att.get("property").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
 						att.get("content").unwrap_or(&None).as_ref(),
