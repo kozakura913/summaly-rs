@@ -384,13 +384,18 @@ async fn get_file(
 						},
 						Some(("alternate",Some(href),Some("application/json+oembed"))) => {
 							let href=html_escape::decode_html_entities(&href);
-							let embed_res=if let Ok(href)=urlencoding::decode(&href){
+							let embed_res=if let Ok(mut href)=urlencoding::decode(&href){
+								if let Some(s)=solve_url(&href,&base_url,&base_url_str,&None,""){
+									href=Cow::Owned(s);
+								}
 								let builder=client.get(href.as_ref());
 								let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
 								let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
 								let timeout_ms=config.timeout.min(q.response_timeout.unwrap_or(u32::MAX) as u64);
 								let builder=builder.timeout(std::time::Duration::from_millis(timeout_ms));
-								builder.send().await.ok()
+								builder.send().await.map_err(|e|{
+									println!("oembed {} {:?}",href,e);
+								}).ok()
 							}else{
 								None
 							};
@@ -455,45 +460,6 @@ async fn get_file(
 	if resp.icon.is_none(){
 		resp.icon=Some(format!("{}/favicon.ico",base_url_str));
 	}
-	fn solve_url(icon:&String,base_url:&reqwest::Url,base_url_str:&str,media_proxy:&Option<String>,proxy_filename:&str)->Option<String>{
-		let icon=if icon.starts_with("//"){
-			Cow::Owned(format!("{}:{}",base_url.scheme(),icon))
-		}else if icon.starts_with("/"){
-			Cow::Owned(format!("{}{}",base_url_str,icon))
-		}else if !icon.starts_with("http"){
-			let buf=std::path::PathBuf::from(base_url.path());
-			let buf=buf.join(std::path::Path::new(icon));
-			if let Some(s)=buf.to_str(){
-				let mut path_list=vec![];
-				for part in s.split("/"){
-					if part.is_empty()||part=="."{
-
-					}else if part==".."{
-						if path_list.len()>0{
-							path_list.remove(path_list.len()-1);
-						}
-					}else{
-						path_list.push(part);
-					}
-				}
-				let mut path_string=base_url_str.to_owned();
-				for part in path_list{
-					path_string+="/";
-					path_string+=part;
-				}
-				Cow::Owned(path_string)
-			}else{
-				return None;
-			}
-		}else{
-			Cow::Borrowed(icon)
-		};
-		if let Some(media_proxy)=&media_proxy{
-			Some(format!("{}{}?url={}",media_proxy,proxy_filename,urlencoding::encode(icon.as_str())))
-		}else{
-			Some(icon.into_owned())
-		}
-	}
 	if let Some(Some(icon))=resp.icon.as_ref().map(|s|
 		solve_url(s,&base_url,&base_url_str,&config.media_proxy,"icon.webp")
 	){
@@ -533,4 +499,43 @@ async fn load_all(resp: reqwest::Response,content_length_limit:u64)->Result<Vec<
 		}
 	}
 	Ok(response_bytes)
+}
+fn solve_url(icon:&str,base_url:&reqwest::Url,base_url_str:&str,media_proxy:&Option<String>,proxy_filename:&str)->Option<String>{
+	let icon=if icon.starts_with("//"){
+		Cow::Owned(format!("{}:{}",base_url.scheme(),icon))
+	}else if icon.starts_with("/"){
+		Cow::Owned(format!("{}{}",base_url_str,icon))
+	}else if !icon.starts_with("http"){
+		let buf=std::path::PathBuf::from(base_url.path());
+		let buf=buf.join(std::path::Path::new(icon));
+		if let Some(s)=buf.to_str(){
+			let mut path_list=vec![];
+			for part in s.split("/"){
+				if part.is_empty()||part=="."{
+
+				}else if part==".."{
+					if path_list.len()>0{
+						path_list.remove(path_list.len()-1);
+					}
+				}else{
+					path_list.push(part);
+				}
+			}
+			let mut path_string=base_url_str.to_owned();
+			for part in path_list{
+				path_string+="/";
+				path_string+=part;
+			}
+			Cow::Owned(path_string)
+		}else{
+			return None;
+		}
+	}else{
+		Cow::Borrowed(icon)
+	};
+	if let Some(media_proxy)=&media_proxy{
+		Some(format!("{}{}?url={}",media_proxy,proxy_filename,urlencoding::encode(&icon)))
+	}else{
+		Some(icon.into_owned())
+	}
 }
