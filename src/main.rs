@@ -256,10 +256,11 @@ async fn get_file(
 		},
 	};
 	let base_url=if let Ok(url)=reqwest::Url::parse(&q.url){
-		format!("{}://{}{}",url.scheme(),url.host_str().unwrap(),url.port().map(|n|format!(":{n}")).unwrap_or_default())
+		url
 	}else{
-		"https://localhost".to_owned()
+		reqwest::Url::parse("https://localhost").unwrap()
 	};
+	let base_url_str=format!("{}://{}{}",base_url.scheme(),base_url.host_str().unwrap(),base_url.port().map(|n|format!(":{n}")).unwrap_or_default());
 	let mut player=SummalyPlayer{
 		url: None,
 		width: None,
@@ -268,7 +269,7 @@ async fn get_file(
 	};
 	let mut resp=SummalyResult{
 		title: None,
-		icon: Some(format!("{}/favicon.ico",base_url)),
+		icon: None,
 		description: None,
 		thumbnail: None,
 		sitename: None,
@@ -414,17 +415,24 @@ async fn get_file(
 			resp.player=player;
 		}
 	}
+	if resp.icon.is_none(){
+		resp.icon=Some(format!("{}/favicon.ico",base_url_str));
+	}
 	if let Some(icon)=&resp.icon{
-		if icon.starts_with("/"){
-			resp.icon=Some(format!("{}{}",base_url,icon));
+		if icon.starts_with("//"){
+			resp.icon=Some(format!("{}:{}",base_url.scheme(),icon));
+		}else if icon.starts_with("/"){
+			resp.icon=Some(format!("{}{}",base_url_str,icon));
 		}
 		if let Some(media_proxy)=&config.media_proxy{
 			resp.icon=Some(format!("{}icon.webp?url={}",media_proxy,urlencoding::encode(resp.icon.as_ref().unwrap())));
 		}
 	}
 	if let Some(thumbnail)=&resp.thumbnail{
-		if thumbnail.starts_with("/"){
-			resp.thumbnail=Some(format!("{}{}",base_url,thumbnail));
+		if thumbnail.starts_with("//"){
+			resp.thumbnail=Some(format!("{}:{}",base_url.scheme(),thumbnail));
+		}else if thumbnail.starts_with("/"){
+			resp.thumbnail=Some(format!("{}{}",base_url_str,thumbnail));
 		}
 		if let Some(media_proxy)=&config.media_proxy{
 			resp.thumbnail=Some(format!("{}thumbnail.webp?url={}",media_proxy,urlencoding::encode(resp.thumbnail.as_ref().unwrap())));
