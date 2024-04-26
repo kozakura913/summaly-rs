@@ -116,7 +116,11 @@ async fn get_file(
 	(client,config):(reqwest::Client,Arc<ConfigFile>),
 	axum::extract::Query(q):axum::extract::Query<RequestParams>,
 )->axum::response::Response{
-	println!("{:?}",q);
+	if q.url.starts_with("coffee://"){
+		let mut headers=axum::http::HeaderMap::new();
+		headers.append("X-Proxy-Error","I'm a teapot".parse().unwrap());
+		return (axum::http::StatusCode::IM_A_TEAPOT,headers).into_response()
+	}
 	let builder=client.get(&q.url);
 	let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
 	let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
