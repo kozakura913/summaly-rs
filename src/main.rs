@@ -230,7 +230,7 @@ async fn get_file(
 	}else{
 		dst
 	};
-	let start=match s.find("<head"){
+	let start=match s.find("<head").or_else(||s.find("<HEAD")){
 		Some(idx)=>idx,
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
@@ -238,7 +238,7 @@ async fn get_file(
 			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
 		},
 	};
-	let end=match s.find("</head>"){
+	let end=match s.find("</head>").or_else(||s.find("</HEAD>")){
 		Some(idx)=>idx,
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
