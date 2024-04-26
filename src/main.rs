@@ -116,7 +116,11 @@ async fn get_file(
 	(client,config):(reqwest::Client,Arc<ConfigFile>),
 	axum::extract::Query(q):axum::extract::Query<RequestParams>,
 )->axum::response::Response{
-	println!("{:?}",q);
+	if q.url.starts_with("coffee://"){
+		let mut headers=axum::http::HeaderMap::new();
+		headers.append("X-Proxy-Error","I'm a teapot".parse().unwrap());
+		return (axum::http::StatusCode::IM_A_TEAPOT,headers).into_response()
+	}
 	let builder=client.get(&q.url);
 	let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
 	let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
@@ -226,7 +230,7 @@ async fn get_file(
 	}else{
 		dst
 	};
-	let start=match s.find("<head"){
+	let start=match s.find("<head").or_else(||s.find("<HEAD")){
 		Some(idx)=>idx,
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
@@ -234,7 +238,7 @@ async fn get_file(
 			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
 		},
 	};
-	let end=match s.find("</head>"){
+	let end=match s.find("</head>").or_else(||s.find("</HEAD>")){
 		Some(idx)=>idx,
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
@@ -252,10 +256,11 @@ async fn get_file(
 		},
 	};
 	let base_url=if let Ok(url)=reqwest::Url::parse(&q.url){
-		format!("{}://{}{}",url.scheme(),url.host_str().unwrap(),url.port().map(|n|format!(":{n}")).unwrap_or_default())
+		url
 	}else{
-		"https://localhost".to_owned()
+		reqwest::Url::parse("https://localhost").unwrap()
 	};
+	let base_url_str=format!("{}://{}{}",base_url.scheme(),base_url.host_str().unwrap(),base_url.port().map(|n|format!(":{n}")).unwrap_or_default());
 	let mut player=SummalyPlayer{
 		url: None,
 		width: None,
@@ -264,7 +269,7 @@ async fn get_file(
 	};
 	let mut resp=SummalyResult{
 		title: None,
-		icon: Some(format!("{}/favicon.ico",base_url)),
+		icon: None,
 		description: None,
 		thumbnail: None,
 		sitename: None,
@@ -276,8 +281,45 @@ async fn get_file(
 	};
 	for node in dom.children.iter(){
 		if let html_parser::Node::Element(element)=node{
+			if element.name.as_str()=="title"{
+				if resp.title.is_none(){//og:title優先
+					let mut s=String::new();
+					for e in element.children.iter(){
+						if let Some(c)=e.text(){
+							s+=c;
+						}
+					}
+					let ts=s.trim();
+					if !ts.is_empty(){
+						if ts==s.as_str(){
+							resp.title=Some(s);
+						}else{
+							resp.title=Some(ts.to_owned());
+						}
+					}
+				}
+			}
 			match (element.name.as_str(),&element.attributes){
 				("meta",att)=>{
+					match att.get("name").unwrap_or(&None).as_ref().map(|s|(
+						s.as_str(),
+						att.get("content").unwrap_or(&None).as_ref(),
+					)){
+						Some(("msapplication-tooltip",Some(content))) => {
+							if resp.description.is_none(){//og:description優先
+								resp.description=Some(content.clone());
+							}
+						},
+						Some(("application-name",Some(content))) => {
+							if resp.sitename.is_none(){//og:site_name優先
+								resp.sitename=Some(content.clone());
+							}
+							if resp.title.is_none(){//og:title優先
+								resp.title=Some(content.clone());
+							}
+						},
+						_=>{}
+					}
 					match att.get("property").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
 						att.get("content").unwrap_or(&None).as_ref(),
@@ -410,17 +452,24 @@ async fn get_file(
 			resp.player=player;
 		}
 	}
+	if resp.icon.is_none(){
+		resp.icon=Some(format!("{}/favicon.ico",base_url_str));
+	}
 	if let Some(icon)=&resp.icon{
-		if icon.starts_with("/"){
-			resp.icon=Some(format!("{}{}",base_url,icon));
+		if icon.starts_with("//"){
+			resp.icon=Some(format!("{}:{}",base_url.scheme(),icon));
+		}else if icon.starts_with("/"){
+			resp.icon=Some(format!("{}{}",base_url_str,icon));
 		}
 		if let Some(media_proxy)=&config.media_proxy{
 			resp.icon=Some(format!("{}icon.webp?url={}",media_proxy,urlencoding::encode(resp.icon.as_ref().unwrap())));
 		}
 	}
 	if let Some(thumbnail)=&resp.thumbnail{
-		if thumbnail.starts_with("/"){
-			resp.thumbnail=Some(format!("{}{}",base_url,thumbnail));
+		if thumbnail.starts_with("//"){
+			resp.thumbnail=Some(format!("{}:{}",base_url.scheme(),thumbnail));
+		}else if thumbnail.starts_with("/"){
+			resp.thumbnail=Some(format!("{}{}",base_url_str,thumbnail));
 		}
 		if let Some(media_proxy)=&config.media_proxy{
 			resp.thumbnail=Some(format!("{}thumbnail.webp?url={}",media_proxy,urlencoding::encode(resp.thumbnail.as_ref().unwrap())));
