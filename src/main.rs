@@ -470,6 +470,9 @@ async fn get_file(
 	){
 		resp.thumbnail=Some(thumbnail);
 	}
+	if let Some(url)=solve_url(&resp.url,&base_url,&base_url_str,&None,""){
+		resp.url=url;
+	}
 	if let Ok(json)=serde_json::to_string(&resp){
 		let mut headers=axum::http::HeaderMap::new();
 		headers.append("Content-Type","application/json".parse().unwrap());
