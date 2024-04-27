@@ -217,16 +217,7 @@ async fn get_file(
 		(dst,_,_)=encoding.decode(&v);
 	}
 	let s=if dst.is_empty(){
-		//strはutf8表現なのでゼロコピー操作
-		let s=match std::str::from_utf8(&v){
-			Ok(s)=>s,
-			Err(e)=>{
-				let mut headers=axum::http::HeaderMap::new();
-				headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
-				return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
-			},
-		};
-		Cow::Borrowed(s)
+		String::from_utf8_lossy(&v)
 	}else{
 		dst
 	};
