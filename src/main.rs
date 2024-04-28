@@ -476,7 +476,8 @@ async fn get_file(
 	}
 	if let Ok(json)=serde_json::to_string(&resp){
 		let mut headers=axum::http::HeaderMap::new();
-		headers.append("Content-Type","application/json".parse().unwrap());
+		headers.append(axum::http::header::CONTENT_TYPE,"application/json".parse().unwrap());
+		headers.append(axum::http::header::CACHE_CONTROL,"public, max-age=1800".parse().unwrap());
 		(axum::http::StatusCode::OK,headers,json).into_response()
 	}else{
 		axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
