@@ -116,6 +116,14 @@ async fn get_file(
 	(client,config):(reqwest::Client,Arc<ConfigFile>),
 	axum::extract::Query(q):axum::extract::Query<RequestParams>,
 )->axum::response::Response{
+	println!("{}\t{}\tlang:{:?}\tresponse_timeout:{:?}\tcontent_length_limit:{:?}\tuser_agent:{:?}",
+		chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+		q.url,
+		q.lang,
+		q.user_agent,
+		q.response_timeout,
+		q.content_length_limit,
+	);
 	if q.url.starts_with("coffee://"){
 		let mut headers=axum::http::HeaderMap::new();
 		headers.append("X-Proxy-Error","I'm a teapot".parse().unwrap());
@@ -294,52 +302,52 @@ async fn get_file(
 				("meta",att)=>{
 					match att.get("name").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("content").unwrap_or(&None).as_ref(),
+						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
 					)){
 						Some(("msapplication-tooltip",Some(content))) => {
 							if resp.description.is_none(){//og:description優先
-								resp.description=Some(content.clone());
+								resp.description=Some(content.into());
 							}
 						},
 						Some(("application-name",Some(content))) => {
 							if resp.sitename.is_none(){//og:site_name優先
-								resp.sitename=Some(content.clone());
+								resp.sitename=Some(content.to_string());
 							}
 							if resp.title.is_none(){//og:title優先
-								resp.title=Some(content.clone());
+								resp.title=Some(content.to_string());
 							}
 						},
 						_=>{}
 					}
 					match att.get("property").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("content").unwrap_or(&None).as_ref(),
+						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
 					)){
 						Some(("og:image",Some(content))) => {
-							resp.thumbnail=Some(content.clone());
+							resp.thumbnail=Some(content.into());
 						},
 						Some(("og:url",Some(content))) => {
-							resp.url=content.clone();
+							resp.url=content.into();
 						},
 						Some(("og:title",Some(content))) => {
-							resp.title=Some(content.clone());
+							resp.title=Some(content.into());
 						},
 						Some(("og:description",Some(content))) => {
-							resp.description=Some(content.clone());
+							resp.description=Some(content.into());
 						},
 						Some(("description",Some(content))) => {
-							resp.description=Some(content.clone());
+							resp.description=Some(content.into());
 						},
 						Some(("og:site_name",Some(content))) => {
-							resp.sitename=Some(content.clone());
+							resp.sitename=Some(content.into());
 						},
 						Some(("og:video:url",Some(content))) => {
 							if player.url.is_none(){//og:video:secure_url優先
-								player.url=Some(content.clone());
+								player.url=Some(content.into());
 							}
 						},
 						Some(("og:video:secure_url",Some(content))) => {
-							player.url=Some(content.clone());
+							player.url=Some(content.into());
 						},
 						Some(("og:video:width",Some(content))) => {
 							if let Ok(content)=content.parse::<f64>(){
@@ -357,24 +365,23 @@ async fn get_file(
 				("link",att)=>{
 					match att.get("rel").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("href").unwrap_or(&None).as_ref(),
+						att.get("href").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
 						att.get("type").unwrap_or(&None).as_ref().map(|t|t.as_str()),
 					)){
 						Some(("shortcut icon",Some(href),_)) => {
 							if resp.icon.is_none(){//icon優先
-								resp.icon=Some(href.clone());
+								resp.icon=Some(href.into());
 							}
 						},
 						Some(("icon",Some(href),_)) => {
-							resp.icon=Some(href.clone());
+							resp.icon=Some(href.into());
 						},
 						Some(("apple-touch-icon",Some(href),_)) => {
 							if resp.thumbnail.is_none(){//og:image優先
-								resp.thumbnail=Some(href.clone());
+								resp.thumbnail=Some(href.into());
 							}
 						},
 						Some(("alternate",Some(href),Some("application/json+oembed"))) => {
-							let href=html_escape::decode_html_entities(&href);
 							let embed_res=if let Ok(mut href)=urlencoding::decode(&href){
 								if let Some(s)=solve_url(&href,&base_url,&base_url_str,&None,""){
 									href=Cow::Owned(s);
