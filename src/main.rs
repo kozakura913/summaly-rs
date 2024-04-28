@@ -162,16 +162,17 @@ async fn get_file(
 	{
 		let mut doc=String::new();
 		let meta_charset_b="<meta ".as_bytes();
+		let uppercase_meta_charset_b="<META ".as_bytes();
 		let mut i=0;
 		let mut bb=vec![];
-		for b in v.iter(){
+		for ch in v.iter(){
 			if meta_charset_b.len()>i{
-				if *b==meta_charset_b[i]{
+				if *ch==meta_charset_b[i]||*ch==uppercase_meta_charset_b[i]{
 					i+=1;
 				}else{
 					i=0;
 				}
-			}else if *b==62{
+			}else if *ch==b'>'{
 				i=0;
 				if let Ok(c)=std::str::from_utf8(&bb){
 					doc+="<meta ";
@@ -180,14 +181,15 @@ async fn get_file(
 				}
 				bb.clear();
 			}else{
-				bb.push(*b);
+				bb.push(*ch);
 			}
 		}
 		if let Ok(doc)=html_parser::Dom::parse(&doc){
 			for node in doc.children.iter(){
 				if let Some(e)=node.element(){
+					let http_equiv=e.attributes.get("http-equiv").unwrap_or(&None).as_ref().map(|s|s.to_lowercase());
 					match (
-						e.attributes.get("http-equiv").unwrap_or(&None).as_ref().map(|s|s.as_str()),
+						http_equiv.as_ref().map(|v|v.as_str()),
 						e.attributes.get("content").unwrap_or(&None).as_ref(),
 					){
 						(Some("content-type"),Some(content))=>{
@@ -206,6 +208,7 @@ async fn get_file(
 	if let Some(content_type)=&content_type{
 		//content_type="text/html;charset=shift_jis"
 		for c in content_type.split(';'){
+			let c=c.to_lowercase();
 			if let Some(i)=c.find("charset="){
 				let charset=&c[i+"charset=".len()..];
 				encoding=encoding_rs::Encoding::for_label(charset.as_bytes());
@@ -473,7 +476,8 @@ async fn get_file(
 	}
 	if let Ok(json)=serde_json::to_string(&resp){
 		let mut headers=axum::http::HeaderMap::new();
-		headers.append("Content-Type","application/json".parse().unwrap());
+		headers.append(axum::http::header::CONTENT_TYPE,"application/json".parse().unwrap());
+		headers.append(axum::http::header::CACHE_CONTROL,"public, max-age=1800".parse().unwrap());
 		(axum::http::StatusCode::OK,headers,json).into_response()
 	}else{
 		axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
