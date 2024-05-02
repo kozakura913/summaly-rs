@@ -305,7 +305,7 @@ async fn get_file(
 				("meta",att)=>{
 					match att.get("name").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
+						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s.trim())),
 					)){
 						Some(("msapplication-tooltip",Some(content))) => {
 							if resp.description.is_none(){//og:description優先
@@ -324,7 +324,7 @@ async fn get_file(
 					}
 					match att.get("property").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
+						att.get("content").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s.trim())),
 					)){
 						Some(("og:image",Some(content))) => {
 							resp.thumbnail=Some(content.into());
@@ -368,7 +368,7 @@ async fn get_file(
 				("link",att)=>{
 					match att.get("rel").unwrap_or(&None).as_ref().map(|s|(
 						s.as_str(),
-						att.get("href").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s)),
+						att.get("href").unwrap_or(&None).as_ref().map(|s|html_escape::decode_html_entities(s.trim())),
 						att.get("type").unwrap_or(&None).as_ref().map(|t|t.as_str()),
 					)){
 						Some(("shortcut icon",Some(href),_)) => {
