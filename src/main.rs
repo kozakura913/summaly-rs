@@ -64,6 +64,30 @@ pub struct OEmbed{
 	width:Option<f64>,
 	height:Option<f64>,
 }
+async fn shutdown_signal() {
+	use tokio::signal;
+	use futures::{future::FutureExt,pin_mut};
+	let ctrl_c = async {
+		signal::ctrl_c()
+			.await
+			.expect("failed to install Ctrl+C handler");
+	}.fuse();
+
+	#[cfg(unix)]
+	let terminate = async {
+		signal::unix::signal(signal::unix::SignalKind::terminate())
+			.expect("failed to install signal handler")
+			.recv()
+			.await;
+	}.fuse();
+	#[cfg(not(unix))]
+	let terminate = std::future::pending::<()>().fuse();
+	pin_mut!(ctrl_c, terminate);
+	futures::select!{
+		_ = ctrl_c => {},
+		_ = terminate => {},
+	}
+}
 fn main() {
 	let config_path=match std::env::var("SUMMALY_CONFIG_PATH"){
 		Ok(path)=>{
@@ -107,7 +131,7 @@ fn main() {
 		.gzip(true);
 		let app=app.layer(comression_layer);
 		let listener = tokio::net::TcpListener::bind(&http_addr).await.unwrap();
-		axum::serve(listener,app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+		axum::serve(listener,app.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown_signal()).await.unwrap();
 	});
 }
 async fn get_file(
