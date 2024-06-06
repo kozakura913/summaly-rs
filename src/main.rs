@@ -14,6 +14,23 @@ pub struct ConfigFile{
 	media_proxy:Option<String>,
 	append_headers:Vec<String>,
 }
+impl ConfigFile{
+	fn append_headers(&self,headers:&mut axum::http::HeaderMap){
+		use std::str::FromStr;
+		for line in self.append_headers.iter(){
+			if let Some(idx)=line.find(":"){
+				if idx+1>=line.len(){
+					continue;
+				}
+				if let Ok(k)=axum::http::HeaderName::from_str(&line[0..idx]){
+					if let Ok(v)=line[idx+1..].parse(){
+						headers.append(k,v);
+					}
+				}
+			}
+		}
+	}
+}
 #[derive(Debug, Deserialize)]
 pub struct RequestParams{
 	url: String,
@@ -151,6 +168,7 @@ async fn get_file(
 	if q.url.starts_with("coffee://"){
 		let mut headers=axum::http::HeaderMap::new();
 		headers.append("X-Proxy-Error","I'm a teapot".parse().unwrap());
+		config.append_headers(&mut headers);
 		return (axum::http::StatusCode::IM_A_TEAPOT,headers).into_response()
 	}
 	let builder=client.get(&q.url);
@@ -170,6 +188,7 @@ async fn get_file(
 		Err(e)=>{
 			let mut headers=axum::http::HeaderMap::new();
 			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			config.append_headers(&mut headers);
 			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
 		},
 	};
@@ -178,6 +197,7 @@ async fn get_file(
 		Err(e)=>{
 			let mut headers=axum::http::HeaderMap::new();
 			headers.append("X-Proxy-Error",e.parse().unwrap());
+			config.append_headers(&mut headers);
 			return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,headers).into_response()
 		},
 	};
@@ -261,6 +281,7 @@ async fn get_file(
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
 			headers.append("X-Proxy-Error","no head".parse().unwrap());
+			config.append_headers(&mut headers);
 			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
 		},
 	};
@@ -269,6 +290,7 @@ async fn get_file(
 		None=>{
 			let mut headers=axum::http::HeaderMap::new();
 			headers.append("X-Proxy-Error","no /head".parse().unwrap());
+			config.append_headers(&mut headers);
 			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
 		},
 	};
@@ -278,6 +300,7 @@ async fn get_file(
 		Err(e)=>{
 			let mut headers=axum::http::HeaderMap::new();
 			headers.append("X-Proxy-Error",e.to_string().parse().unwrap());
+			config.append_headers(&mut headers);
 			return (axum::http::StatusCode::BAD_GATEWAY,headers).into_response()
 		},
 	};
@@ -502,6 +525,7 @@ async fn get_file(
 		let mut headers=axum::http::HeaderMap::new();
 		headers.append(axum::http::header::CONTENT_TYPE,"application/json".parse().unwrap());
 		headers.append(axum::http::header::CACHE_CONTROL,"public, max-age=1800".parse().unwrap());
+		config.append_headers(&mut headers);
 		(axum::http::StatusCode::OK,headers,json).into_response()
 	}else{
 		axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
