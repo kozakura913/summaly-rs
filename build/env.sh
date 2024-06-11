@@ -4,7 +4,7 @@ if [ ${TARGETARCH} = "amd64" ]; then
 	export CC=x86_64-linux-musl-gcc
 	export RUST_TARGET="x86_64-unknown-linux-musl"
 	export RUSTFLAGS="-C linker=${CC}"
-elif [ ${TARGETARCH} = "686" ]; then
+elif [ ${TARGETARCH} = "386" ]; then
 	export MUSL_NAME="i686-linux-musl-cross"
 	export CC=i686-linux-musl-gcc
 	export RUST_TARGET="i686-unknown-linux-musl"
