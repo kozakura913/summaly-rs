@@ -1,9 +1,50 @@
-use std::{borrow::Cow, io::Write, net::SocketAddr, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, io::Write, net::SocketAddr, sync::Arc};
 
 use axum::{response::IntoResponse, Router};
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
+/** レートリミット対象の処理が終わった時に破棄する*/
+struct RateLimitTracker(Option<RateLimit>,Option<String>,tokio::runtime::Handle);
+impl Drop for RateLimitTracker{
+	fn drop(&mut self) {
+		let s=self.1.take().unwrap();
+		let hosts=self.0.take().unwrap().hosts;
+		self.2.spawn(async move{
+			tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+			let mut wlock=hosts.write().await;
+			let active_tasks=wlock.remove(&s).unwrap_or(0);
+			if active_tasks>1{
+				wlock.insert(s,active_tasks-1);
+			}
+		});
+	}
+}
+#[derive(Clone,Debug)]
+struct RateLimit{
+	hosts:Arc<tokio::sync::RwLock<HashMap<String,u32>>>,
+}
+impl RateLimit{
+	/** 処理を実行しても良いか確認し、ロックを取得する。Err(true)は待てば成功する可能性がある*/
+	async fn request(&self,url:&str)->Result<RateLimitTracker,bool>{
+		let host=reqwest::Url::parse(url).map_err(|_|false)?;
+		let host=host.host().ok_or(false)?.to_string();
+		let rlock=self.hosts.read().await;
+		let active_tasks=rlock.get(&host).copied().unwrap_or(0);
+		drop(rlock);
+		let active_tasks=active_tasks+1;
+		if active_tasks<3{
+			//処理中がこれ含め3件未満であれば即時実行
+			let mut wlock=self.hosts.write().await;
+			wlock.insert(host.clone(),active_tasks);
+			let handle=tokio::runtime::Handle::current();
+			Ok(RateLimitTracker(Some(self.clone()),Some(host),handle))
+		}else{
+			//再試行するべき失敗
+			Err(true)
+		}
+	}
+}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct ConfigFile{
 	bind_addr: String,
@@ -137,7 +178,10 @@ fn main() {
 	let client=reqwest::ClientBuilder::new();
 	let client=client.build().unwrap();
 	let rt=tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
-	let arg_tup=(client,config);
+	let limit=RateLimit{
+		hosts:Arc::new(tokio::sync::RwLock::new(HashMap::new()))
+	};
+	let arg_tup=(client,config,limit);
 	rt.block_on(async{
 		let http_addr:SocketAddr = arg_tup.1.bind_addr.parse().unwrap();
 		let app = Router::new();
@@ -154,7 +198,7 @@ fn main() {
 async fn get_file(
 	_path:Option<axum::extract::Path<String>>,
 	request_headers:axum::http::HeaderMap,
-	(client,config):(reqwest::Client,Arc<ConfigFile>),
+	(client,config,limit):(reqwest::Client,Arc<ConfigFile>,RateLimit),
 	axum::extract::Query(q):axum::extract::Query<RequestParams>,
 )->axum::response::Response{
 	println!("{}\t{}\tlang:{:?}\tresponse_timeout:{:?}\tcontent_length_limit:{:?}\tuser_agent:{:?}",
@@ -171,6 +215,32 @@ async fn get_file(
 		config.append_headers(&mut headers);
 		return (axum::http::StatusCode::IM_A_TEAPOT,headers).into_response()
 	}
+	for _ in 0..3{
+		match limit.request(&q.url).await{
+			Ok(_)=>{
+				return remote_request(request_headers,(client,config),q).await;
+			},
+			Err(true)=>{
+				tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+			},
+			_=>{
+				let mut headers=axum::http::HeaderMap::new();
+				headers.append(axum::http::header::CACHE_CONTROL,"public, max-age=30".parse().unwrap());
+				config.append_headers(&mut headers);
+				return (axum::http::StatusCode::BAD_REQUEST,headers).into_response();
+			}
+		}
+	}
+	let mut headers=axum::http::HeaderMap::new();
+	headers.append(axum::http::header::CACHE_CONTROL,"public, max-age=30".parse().unwrap());
+	config.append_headers(&mut headers);
+	(axum::http::StatusCode::TOO_MANY_REQUESTS,headers).into_response()
+}
+async fn remote_request(
+		request_headers:axum::http::HeaderMap,
+		(client,config):(reqwest::Client,Arc<ConfigFile>),
+		q:RequestParams,
+	)->axum::response::Response{
 	let builder=client.get(&q.url);
 	let user_agent=q.user_agent.as_ref().unwrap_or_else(||&config.user_agent);
 	let builder=builder.header(reqwest::header::USER_AGENT,user_agent);
